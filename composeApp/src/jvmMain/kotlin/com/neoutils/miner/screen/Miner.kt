@@ -8,27 +8,33 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
-import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MaterialTheme.colorScheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -112,20 +118,33 @@ data class MinerUiState(
 @Composable
 fun MinerRoute(
     viewModel: MinerViewModel = viewModel(),
-) {
+) = MaterialTheme {
+
     val uiState = viewModel.uiState.collectAsState().value
 
-    MaterialTheme {
-        MinerScreen(
-            uiState = uiState,
-            onStartMining = {
-                viewModel.onStartMining()
-            },
-            onStopMining = {
-                viewModel.onStopMining()
-            }
-        )
-    }
+    MinerScreen(
+        uiState = uiState,
+        onStartMining = {
+            viewModel.onStartMining()
+        },
+        onStopMining = {
+            viewModel.onStopMining()
+        }
+    )
+}
+
+enum class TabItem(
+    val title: String,
+) {
+    BLOCKCHAIN(
+        title = "blockchain"
+    ),
+    TRANSACTIONS(
+        title = "transactions"
+    ),
+    WALLETS(
+        title = "wallets"
+    );
 }
 
 @Composable
@@ -164,19 +183,79 @@ fun MinerScreen(
             )
         }
     }
-) {
-    LazyColumn(
-        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.Top),
-        contentPadding = PaddingValues(16.dp),
-        modifier = Modifier.padding(it),
+) { padding ->
+    Column(
+        modifier = Modifier
+            .padding(padding)
+            .fillMaxSize(),
     ) {
-        items(uiState.blocks) { block ->
-            BlockCard(
-                block = block,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .animateItem()
-            )
+
+        var selected by remember { mutableStateOf(TabItem.BLOCKCHAIN) }
+
+        TabRow(
+            selectedTabIndex = TabItem.entries.indexOf(selected),
+        ) {
+            TabItem.entries.forEach { tab ->
+                Tab(
+                    selected = selected == tab,
+                    onClick = {
+                        selected = tab
+                    },
+                    text = {
+                        Text(text = tab.title)
+                    }
+                )
+            }
+        }
+
+        val pagerState = rememberPagerState { TabItem.entries.size }
+
+        LaunchedEffect(Unit) {
+            snapshotFlow {
+                TabItem.entries.indexOf(selected)
+            }.collect { page ->
+                pagerState.animateScrollToPage(page)
+            }
+        }
+
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize(),
+        ) { index ->
+            when (TabItem.entries[index]) {
+                TabItem.BLOCKCHAIN -> {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(16.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        items(uiState.blocks) { block ->
+                            BlockCard(
+                                block = block,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
+
+                TabItem.TRANSACTIONS -> {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Text(text = "transactions")
+                    }
+                }
+
+                TabItem.WALLETS -> {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Text(text = "wallets")
+                    }
+                }
+            }
         }
     }
 }
