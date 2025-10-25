@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
@@ -20,7 +21,9 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -39,61 +42,77 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.neoutils.miner.manager.BlockchainManager
+import com.neoutils.miner.constant.Managers
+import com.neoutils.miner.manager.WalletsManager
 import com.neoutils.miner.model.Block
+import com.neoutils.miner.model.BlockBuilder
+import com.neoutils.miner.model.Wallet
+import com.neoutils.miner.model.createCoinbaseTransaction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-class MinerViewModel : ViewModel() {
+class MinerViewModel(
+    private val blockchainManager: BlockchainManager = Managers.blockchain,
+    private val walletsManager: WalletsManager = Managers.wallets
+) : ViewModel() {
 
-    private val blockchain = mutableListOf(Block())
+    private val running = MutableStateFlow(false)
 
-    private val _uiState = MutableStateFlow(MinerUiState(blocks = blockchain))
-    val uiState: StateFlow<MinerUiState> = _uiState.asStateFlow()
+    val uiState = combine(
+        blockchainManager.flow,
+        running,
+    ) { blockchain, running ->
+        MinerUiState(
+            running = running,
+            blocks = blockchain.map { block ->
+                block.toUiState()
+            },
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(),
+        initialValue = MinerUiState(),
+    )
 
     private var minerJob: Job? = null
+    private lateinit var wallet: Wallet
 
     fun onStartMining() {
+
+        wallet = walletsManager.createWallet()
+
+        running.value = true
+
         minerJob?.cancel()
         minerJob = viewModelScope.launch(Dispatchers.Default) {
             while (isActive) {
-                var block: Block
-                var nonce = 0L
+                val transactions = listOf(
+                    createCoinbaseTransaction(wallet.address)
+                )
 
-                do {
-                    block = Block(
-                        index = blockchain.size,
-                        nonce = nonce++,
-                        difficulty = 6,
-                        prev = blockchain.last().hash,
-                    )
+                val prevBlock = blockchainManager.blocks.last()
 
-                    launch(Dispatchers.Main) {
-                        _uiState.update { state ->
-                            state.copy(
-                                block = block,
-                            )
-                        }
-                    }
-                } while (!block.valid)
+                val block = BlockBuilder(
+                    index = prevBlock.index + 1,
+                    difficulty = 5,
+                    prev = prevBlock.hash,
+                    transactions = transactions,
+                )
 
-                blockchain.add(block)
+                while (isActive && !block.isValid()) block.nonce++
 
-                launch(Dispatchers.Main) {
-                    _uiState.update {
-                        it.copy(
-                            blocks = blockchain,
-                        )
-                    }
-                }
+                if (block.isValid()) blockchainManager.addBlock(block.build())
             }
         }
     }
@@ -101,18 +120,39 @@ class MinerViewModel : ViewModel() {
     fun onStopMining() {
         minerJob?.cancel()
         minerJob = null
-
-        _uiState.update {
-            it.copy(
-                block = null,
-            )
-        }
+        running.value = false
     }
 }
 
 data class MinerUiState(
-    val block: Block? = null,
+    val running: Boolean = false,
     val blocks: List<Block> = listOf(),
+) {
+    data class Block(
+        val index: Int,
+        val nonce: Long,
+        val hash: String,
+    )
+}
+
+enum class TabItem(
+    val title: String,
+) {
+    BLOCKCHAIN(
+        title = "blockchain"
+    ),
+    WALLETS(
+        title = "wallets"
+    ),
+    TRANSACTIONS(
+        title = "transactions"
+    );
+}
+
+fun Block.toUiState() = MinerUiState.Block(
+    index = index,
+    nonce = nonce,
+    hash = hash,
 )
 
 @Composable
@@ -133,35 +173,34 @@ fun MinerRoute(
     )
 }
 
-enum class TabItem(
-    val title: String,
-) {
-    BLOCKCHAIN(
-        title = "blockchain"
-    ),
-    TRANSACTIONS(
-        title = "transactions"
-    ),
-    WALLETS(
-        title = "wallets"
-    );
-}
-
 @Composable
 fun MinerScreen(
     uiState: MinerUiState,
     onStartMining: () -> Unit = { },
     onStopMining: () -> Unit = { },
+    modifier: Modifier = Modifier
 ) = Scaffold(
+    modifier = modifier,
     topBar = {
         TopAppBar(
             title = { Text(text = "Miner") },
             actions = {
-                if (uiState.block != null) {
+                if (uiState.running) {
                     Button(
                         onClick = { onStopMining() }
                     ) {
-                        Text(text = "Stop")
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                color = LocalContentColor.current,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(14.dp)
+                            )
+
+                            Text(text = "Stop")
+                        }
                     }
                 } else {
                     Button(
@@ -173,16 +212,6 @@ fun MinerScreen(
             }
         )
     },
-    bottomBar = {
-        uiState.block?.let {
-            BlockCard(
-                block = uiState.block,
-                modifier = Modifier
-                    .padding(16.dp)
-                    .fillMaxWidth()
-            )
-        }
-    }
 ) { padding ->
     Column(
         modifier = Modifier
@@ -248,12 +277,9 @@ fun MinerScreen(
                 }
 
                 TabItem.WALLETS -> {
-                    Box(
-                        contentAlignment = Alignment.Center,
+                    WalletsRoute(
                         modifier = Modifier.fillMaxSize()
-                    ) {
-                        Text(text = "wallets")
-                    }
+                    )
                 }
             }
         }
@@ -262,7 +288,7 @@ fun MinerScreen(
 
 @Composable
 fun BlockCard(
-    block: Block,
+    block: MinerUiState.Block,
     modifier: Modifier = Modifier
 ) = Card(
     modifier = modifier,
@@ -292,7 +318,7 @@ fun BlockCard(
         BasicText(
             text = block.hash,
             maxLines = 1,
-            autoSize = TextAutoSize.StepBased(),
+            autoSize = TextAutoSize.StepBased(minFontSize = 4.sp),
             modifier = Modifier
                 .background(
                     color = Color.LightGray,

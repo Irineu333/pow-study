@@ -7,13 +7,23 @@ data class Block(
     val difficulty: Int = 0,
     val prev: String = "0".repeat(64),
     val timestamp: Long = System.currentTimeMillis(),
-    val data: String = "",
+    val transactions: List<Transaction> = emptyList(),
     val nonce: Long = 0
 ) {
     val hash = toString().sha256()
-    val valid = hash.startsWith("0".repeat(difficulty))
 
-    override fun toString(): String {
-        return "$index\n$prev\n$difficulty\n$nonce\n"
+    init {
+        check(hash.startsWith("0".repeat(difficulty))) { "Invalid block hash" }
     }
+
+    override fun toString() = listOf(
+        index,
+        difficulty,
+        prev,
+        timestamp,
+        transactions.joinToString(separator = "\n"),
+        nonce
+    ).joinToString(separator = "\n")
 }
+
+
